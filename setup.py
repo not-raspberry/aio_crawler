@@ -11,6 +11,7 @@ with open(os.path.join(here, 'README.rst')) as f:
 
 REQUIREMENTS = [
     'aiohttp==0.22.5',
+    'cchardet==1.0.0',
     'click==6.6',
 ]
 
