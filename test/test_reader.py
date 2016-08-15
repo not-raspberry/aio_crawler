@@ -1,6 +1,6 @@
 """Testing extracting resources from a tag soup."""
 import pytest
-from aio_crawler.reader import resources_from_tag_soup
+from aio_crawler.reader import resources_from_tag_soup, is_subpage
 
 
 @pytest.mark.parametrize('soup, links', [
@@ -42,3 +42,19 @@ def test_resources_from_tag_soup_invalid(soup):
 def test_resources_from_tag_soup_omisions(soup):
     """Test not extracting things that definitely are not resource links."""
     assert resources_from_tag_soup(soup) == []
+
+
+@pytest.mark.parametrize('resource, result', [
+    (('a', 'href', 'http://aaa.com'), True),
+    (('a', 'href', ''), True),
+    (('a', 'href', '/a/b'), True),
+    (('a', 'href', '//aaa.com'), True),
+    (('a', 'href', 'https://aaa.com'), True),
+    (('a', 'href', 'http://bbb.com'), False),
+    (('img', 'src', '/a/b'), False),
+    (('link', 'href', '/a/b'), False),
+    (('a', 'src', '/a/b'), False),
+])
+def test_is_subpage(resource, result):
+    """Check detecting whether a resource is a document belonging to this page."""
+    assert is_subpage(resource, 'aaa.com') == result

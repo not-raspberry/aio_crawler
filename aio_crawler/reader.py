@@ -1,5 +1,6 @@
 """Extracting resources from the bodies."""
 import re
+from urllib.parse import urlsplit
 
 
 tag_contents = r'[^<>]'
@@ -26,3 +27,14 @@ def resources_from_tag_soup(soup: str) -> list:
         e.g. ('a', 'href', '/password')
     """
     return resource_re.findall(soup)
+
+
+def is_subpage(resource: tuple, site_netloc: str) -> bool:
+    """Check if the resource is a sub-page (a page within this site)."""
+    tag, attr, url = resource
+
+    if tag != 'a' or attr != 'href':
+        return False
+
+    split = urlsplit(url)
+    return split.netloc == '' or split.netloc == site_netloc
