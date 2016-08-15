@@ -26,48 +26,55 @@ async def fetch_page(session, url):
         return links, resources
 
 
-async def fetching_worker(session, queue, url_to_results):
-    """Repeatedly run the fetching corouting and update visited URLs."""
-    while True:
-        address = await queue.get()
-        url_to_results[address] = None
-        log.debug('Visiting %s', address)
+class Crawler():
+    """A crawler implemantation, mapping links and other resources of a single site."""
 
-        try:
-            with aiohttp.Timeout(TIMEOUT):
-                links, resources = await fetch_page(session, address)
-        except asyncio.TimeoutError as e:
-            log.warning('Timed out, requeueing the resource: %s', address)
-            queue.put_nowait(address)
-            continue
+    def __init__(self, address):
+        """Initialize the crawler."""
+        self.address = address
+        self.url_to_results = {}
+        self.queue = asyncio.Queue()
 
-        url_to_results[address] = (links, resources)
+    async def fetching_worker(self, session):
+        """Repeatedly run the fetching coroutine and update visited URLs."""
+        while True:
+            address = await self.queue.get()
+            self.url_to_results[address] = None
+            log.debug('Visiting %s', address)
 
-        for url in links:
-            if url not in url_to_results:
-                queue.put_nowait(url)
-            url_to_results.setdefault(None)
-        queue.task_done()
+            try:
+                with aiohttp.Timeout(TIMEOUT):
+                    links, resources = await fetch_page(session, address)
+            except asyncio.TimeoutError as e:
+                log.warning('Timed out, requeueing the resource: %s', address)
+                self.queue.put_nowait(address)
+                continue
 
+            self.url_to_results[address] = (links, resources)
 
-def crawl(starting_address, concurrency=20):
-    """Crawl the entire website."""
-    loop = asyncio.get_event_loop()
-    url_to_results = {}
-    queue = asyncio.Queue()
-    queue.put_nowait(starting_address)
+            for url in links:
+                if url not in self.url_to_results:
+                    self.queue.put_nowait(url)
+                self.url_to_results.setdefault(None)
+            self.queue.task_done()
 
-    with aiohttp.ClientSession(loop=loop) as session:
-        tasks = [loop.create_task(fetching_worker(session, queue, url_to_results))
-                 for _ in range(concurrency)]
+    def crawl(self, concurrency=20):
+        """Crawl the entire website."""
+        loop = asyncio.get_event_loop()
+        self.queue.put_nowait(self.address)
 
-        try:
-            loop.run_until_complete(queue.join())
-        except KeyboardInterrupt:
-            log.warning('Keyboard interrupt. Will return partial results.')
-            raise
-        finally:
-            for task in tasks:
-                task.cancel()
-            loop.run_until_complete(asyncio.wait(tasks))
-            return url_to_results
+        with aiohttp.ClientSession(loop=loop) as session:
+            tasks = [loop.create_task(self.fetching_worker(session))
+                     for _ in range(concurrency)]
+
+            try:
+                loop.run_until_complete(self.queue.join())
+            except KeyboardInterrupt:
+                log.warning('Keyboard interrupt. Will return partial results.')
+                raise
+            finally:
+                for task in tasks:
+                    task.cancel()
+                loop.run_until_complete(asyncio.wait(tasks))
+
+                return self.url_to_results
