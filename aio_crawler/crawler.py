@@ -73,7 +73,7 @@ class Crawler():
         else:
             self.url_to_results[address] = {
                 'links': sorted(list(links)),
-                'resources': sorted(list(resources))
+                'assets': sorted(list(resources))
             }
 
             for url in links:
