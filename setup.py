@@ -46,5 +46,6 @@ setup(
     extras_require={'tests': TEST_REQUIREMENTS},
     cmdclass={},
     entry_points={
+        'console_scripts': 'aio_crawler=aio_crawler.cli:cli_entry'
     },
 )
