@@ -9,16 +9,19 @@ from .reader import resources_from_tag_soup
 log = logging.getLogger(__name__)
 
 
+class BadStatusCode(Exception):
+    """Raised when the resource does not respond with 'OK' responses."""
+
 async def fetch_page(session: aiohttp.ClientSession, url: str) -> tuple:
     """
     Grab a page and return a tuple of lists of links and resources.
 
     :return: tuple of sets of links and all resources, including links
+    :raise BadStatusCode:
     """
     async with session.get(url) as response:
         if not 200 <= response.status < 300:
-            log.warning('Non-OK response (%s) received at %s', response.status, url)
-            return (set(), set())
+            raise BadStatusCode(response.status)
 
         if 'html' not in response.headers['content-type']:
             return (set(), set())
@@ -31,14 +34,16 @@ async def fetch_page(session: aiohttp.ClientSession, url: str) -> tuple:
 class Crawler():
     """A crawler implemantation, mapping links and other resources of a single site."""
 
-    def __init__(self, address: str, timeout: float = 10.0):
+    def __init__(self, address: str, timeout: float = 10.0, concurrency: int = 20):
         """Initialize the crawler."""
         self.url_to_results = {}
+        self.known_bad_resources = set()
         self.address = address
         self.timeout = timeout
+        self.concurrency = concurrency
         self.loop = get_event_loop()
 
-    async def fetching_worker(self, address: str, session: aiohttp.ClientSession):
+    async def fetching_worker(self, address: str, session: aiohttp.ClientSession, retries: int=3):
         """
         Grab the page, discover links and run coroutines to fetch them.
 
@@ -54,29 +59,40 @@ class Crawler():
         try:
             with aiohttp.Timeout(self.timeout):
                 links, resources = await fetch_page(session, address)
+        except BadStatusCode as e:
+            log.warning('Non-OK response (%s) received at %s - ignoring.', e.args[0], address)
+            self.known_bad_resources.add(address)
         except TimeoutError as e:
-            log.warning('Timed out, requeueing the resource: %s', address)
-            self.loop.create_task(self.fetching_worker(address, session))
+            if retries > 0:
+                log.warning('Timed out, requeueing the resource: %s, remaining attempts: %s.',
+                            address, retries)
+                self.loop.create_task(self.fetching_worker(address, session, retries - 1))
+            else:
+                log.warning('Gave up requesting %s due to the timeouts.', address)
+                self.known_bad_resources.add(address)
+        else:
+            self.url_to_results[address] = {
+                'links': sorted(list(links)),
+                'resources': sorted(list(resources))
+            }
 
-        self.url_to_results[address] = (links, resources)
+            for url in links:
+                # Eagerly creating coroutines for unseen links.
+                if url not in self.url_to_results and url not in self.known_bad_resources:
+                    self.url_to_results[url] = None  # Marking the URL as known.
+                    self.loop.create_task(self.fetching_worker(url, session))
+        finally:
+            if Task.all_tasks() == {Task.current_task()}:
+                # No other resources to grab.
+                self.loop.stop()
 
-        for url in links:
-            # Eagerly creating coroutines for unseen links.
-            if url not in self.url_to_results:
-                self.url_to_results[address] = None  # Marking links as seen.
-                self.loop.create_task(self.fetching_worker(url, session))
-
-        if Task.all_tasks() == {Task.current_task()}:
-            # No other resources to grab.
-            self.loop.stop()
-
-    def crawl(self, concurrency: int = 20) -> dict:
+    def crawl(self) -> dict:
         """
         Crawl the entire website.
 
         :return: A dict with crawling results.
         """
-        connector = aiohttp.TCPConnector(limit=concurrency)
+        connector = aiohttp.TCPConnector(limit=self.concurrency)
         with aiohttp.ClientSession(loop=self.loop, connector=connector) as session:
             self.loop.create_task(self.fetching_worker(self.address, session))
             try:
