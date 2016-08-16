@@ -23,7 +23,7 @@ async def fetch_page(session: aiohttp.ClientSession, url: str) -> tuple:
         if not 200 <= response.status < 300:
             raise BadStatusCode(response.status)
 
-        if 'html' not in response.headers['content-type']:
+        if 'html' not in response.headers.get('content-type', ''):
             return (set(), set())
 
         html = await response.text()
